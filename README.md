@@ -8,9 +8,6 @@ If you like, it will download and install.
 I created this because I don't like Nvidia Experience and the
 website makes you jump through hoops to check for new versions.
 
-This was ported from node because I got tired of having to
-update packages constantly in node hell.
-
 ## NvidiaDriverTrayChecker
 
 ### Usage
@@ -44,5 +41,11 @@ I'm planning to also make a super straightforward console app version
 of this at some point. Something like run, hey which driver (Studio or
 GameReady), hey cool there's a new one wanna install? Hey cool.
 
+## History
+
+This was ported from this node project because I got tired of having to
+update packages constantly in node hell:
+
+[InsidiousForce/nvidia-geforce-driver-checker](https://github.com/InsidiousForce/nvidia-geforce-driver-checker)
 
 
