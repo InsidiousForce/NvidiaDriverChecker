@@ -12,26 +12,18 @@ namespace NvidiaDriverTrayChecker
 {
     static class Program
     {
-        private static Mutex? mutex = null;
+        private static Mutex? mutex;
         private const string MutexName = "Global\\NvidiaDriverTrayChecker_SingleInstance";
 
         private const string StudioApiUrl =
-            "https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php" +
-            "?func=DriverManualLookup&psid=131&pfid=1076&osID=135&languageCode=1033&beta=0&isWHQL=0" +
-            "&dltype=-1&dch=1&upCRD=1&qnf=0&sort1=1&numberOfResults=10";
-
+            "https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php?func=DriverManualLookup&psid=131&pfid=1076&osID=135&languageCode=1033&beta=0&isWHQL=0&dltype=-1&dch=1&upCRD=1&qnf=0&sort1=1&numberOfResults=10";
         private const string GameReadyApiUrl =
-            "https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php" +
-            "?func=DriverManualLookup&psid=131&pfid=1076&osID=135&languageCode=1033&beta=0&isWHQL=0" +
-            "&dltype=-1&dch=1&upCRD=0&qnf=0&sort1=1&numberOfResults=10";
+            "https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php?func=DriverManualLookup&psid=131&pfid=1076&osID=135&languageCode=1033&beta=0&isWHQL=0&dltype=-1&dch=1&upCRD=0&qnf=0&sort1=1&numberOfResults=10";
 
         private const string ApiUrl = true ? StudioApiUrl : GameReadyApiUrl;
 
         private static readonly HttpClient client = new() { Timeout = TimeSpan.FromSeconds(30) };
-        private static readonly string DownloadDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            "NVIDIA_Drivers"
-        );
+        private static readonly string DownloadDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "NVIDIA_Drivers");
 
         [STAThread]
         static void Main()
@@ -55,23 +47,20 @@ namespace NvidiaDriverTrayChecker
         class TrayApplicationContext : ApplicationContext
         {
             private readonly NotifyIcon trayIcon;
-            private string? latestVersion;
-            private string? latestUrl;
-            private string? installedVersion;
-            private bool updateAvailable;
+            private string? latestVersion, latestUrl, installedVersion;
             private CancellationTokenSource? downloadCts;
 
             public TrayApplicationContext()
             {
                 trayIcon = new NotifyIcon
                 {
-                    Icon = GetTrayIcon(false),  // initially no red dot
+                    Icon = LoadTrayIcon(false),
                     Visible = true,
                     Text = "NVIDIA Driver Checker",
                     ContextMenuStrip = new ContextMenuStrip()
                 };
 
-                trayIcon.DoubleClick += (_, _) => trayIcon.ContextMenuStrip.Show(Cursor.Position);
+                trayIcon.DoubleClick += (_, _) => trayIcon.ContextMenuStrip?.Show(Cursor.Position);
 
                 Directory.CreateDirectory(DownloadDir);
 
@@ -80,34 +69,80 @@ namespace NvidiaDriverTrayChecker
 
             private void UiInvoke(Action action)
             {
-                if (trayIcon?.ContextMenuStrip != null && trayIcon.ContextMenuStrip.InvokeRequired)
+                if (trayIcon.ContextMenuStrip?.InvokeRequired == true)
                     trayIcon.ContextMenuStrip.Invoke(action);
                 else
                     action();
             }
 
+            private void ShowBalloon(string title, string text, ToolTipIcon icon, int timeout = 3000)
+            {
+                UiInvoke(() =>
+                {
+                    trayIcon.BalloonTipTitle = title;
+                    trayIcon.BalloonTipText = text;
+                    trayIcon.BalloonTipIcon = icon;
+                    trayIcon.ShowBalloonTip(timeout);
+                });
+            }
+
+            private void UpdateContextMenu(bool showInstall = false)
+            {
+                UiInvoke(() =>
+                {
+                    var menu = trayIcon.ContextMenuStrip!;
+                    menu.Items.Clear();
+
+                    if (showInstall)
+                        menu.Items.Add($"Update {installedVersion} -> {latestVersion}", null, OnInstallClicked);
+
+                    menu.Items.Add("Check now", null, async (_, _) => await CheckForUpdateAsync());
+                    menu.Items.Add("Exit", null, (_, _) => Application.Exit());
+                });
+            }
+
+            private void SetState(string tipText, ToolTipIcon icon, bool showInstallItem)
+            {
+                trayIcon.Text = tipText.Length > 63 ? tipText[..60] + "..." : tipText;
+                ShowBalloon("NVIDIA Driver Checker", tipText, icon, 6000);
+                UpdateContextMenu(showInstallItem);
+                SetTrayIcon(showInstallItem);
+            }
+
+            private void SetTrayIcon(bool showUpdateDot)
+            {
+                // generate icon directly on UI thread (small and fast)
+                using var icon = LoadTrayIcon(showUpdateDot);
+                trayIcon.Icon?.Dispose();
+                trayIcon.Icon = (Icon)icon.Clone();
+            }
+
+            private Icon LoadTrayIcon(bool showDot)
+            {
+                string resource = showDot ? "NvidiaDriverTrayChecker.res.tray1.ico" : "NvidiaDriverTrayChecker.res.tray0.ico";
+                var asm = System.Reflection.Assembly.GetExecutingAssembly();
+                using var stream = asm.GetManifestResourceStream(resource);
+                if (stream == null) throw new Exception($"Resource not found: {resource}");
+                return new Icon(stream);
+            }
+
             private async Task CheckForUpdateAsync()
             {
-                // Run PowerShell version check off the UI thread
                 installedVersion = await Task.Run(() => GetInstalledVersionPowerShell());
-
                 if (string.IsNullOrWhiteSpace(installedVersion))
                 {
                     SetState("No NVIDIA driver detected", ToolTipIcon.Warning, false);
                     return;
                 }
 
-                // Fetch latest driver normally (already async)
                 (latestVersion, latestUrl) = await GetLatestDriver(ApiUrl);
-
                 if (string.IsNullOrWhiteSpace(latestVersion) || string.IsNullOrWhiteSpace(latestUrl))
                 {
                     SetState("Failed to fetch driver info", ToolTipIcon.Error, false);
                     return;
                 }
 
-                updateAvailable = IsNewer(latestVersion, installedVersion);
-
+                var updateAvailable = IsNewer(latestVersion, installedVersion);
                 SetState(
                     updateAvailable
                         ? $"Update available: {latestVersion} (current: {installedVersion})"
@@ -117,93 +152,9 @@ namespace NvidiaDriverTrayChecker
                 );
             }
 
-            private void SetState(string tipText, ToolTipIcon icon, bool showInstallItem)
-            {
-                UiInvoke(() =>
-                {
-                    trayIcon.Text = tipText.Length > 63 ? tipText.Substring(0, 60) + "..." : tipText;
-                    trayIcon.BalloonTipTitle = "NVIDIA Driver Checker";
-                    trayIcon.BalloonTipText = tipText;
-                    trayIcon.BalloonTipIcon = icon;
-
-                    trayIcon.ContextMenuStrip?.Items.Clear();
-
-                    if (showInstallItem)
-                    {
-                        SetTrayIcon(updateAvailable);
-                        trayIcon.ContextMenuStrip?.Items.Add(
-                            $"Update {installedVersion} -> {latestVersion}",
-                            null,
-                            OnInstallClicked
-                        );
-                    }
-
-                    trayIcon.ContextMenuStrip?.Items.Add("Check now", null, async (_, _) => await CheckForUpdateAsync());
-                    trayIcon.ContextMenuStrip?.Items.Add("Exit", null, (_, _) => Application.Exit());
-
-                    trayIcon.ShowBalloonTip(6000);
-                });
-            }
-
-            private void SetTrayIcon(bool showUpdateDot)
-            {
-                Task.Run(() =>
-                {
-                    using Icon newIcon = GetTrayIcon(showUpdateDot); // generate off UI thread
-                    UiInvoke(() =>
-                    {
-                        trayIcon.Icon?.Dispose();
-                        trayIcon.Icon = (Icon)newIcon.Clone(); // clone to keep handle valid
-                    });
-                });
-            }
-
-            private Icon GetTrayIcon(bool showUpdateDot)
-            {
-                using Icon baseIcon = showUpdateDot ? LoadEmbeddedIcon("NvidiaDriverTrayChecker.res.tray1.ico") : LoadEmbeddedIcon("NvidiaDriverTrayChecker.res.tray0.ico");
-
-                using var baseBitmap = baseIcon.ToBitmap();
-                var bmp = new Bitmap(baseBitmap.Width, baseBitmap.Height);
-
-                using (var g = Graphics.FromImage(bmp))
-                {
-                    g.DrawImage(baseBitmap, 0, 0, baseBitmap.Width, baseBitmap.Height);
-
-                    if (showUpdateDot && false)
-                    {
-                        int dotSize = 16;
-                        int margin = 2;
-                        int x = bmp.Width - dotSize - margin;
-                        int y = bmp.Height - dotSize - margin;
-
-                        Color winUpdateOrange = Color.FromArgb(255, 186, 65);
-                        using (var brush = new SolidBrush(winUpdateOrange))
-                        {
-                            g.FillEllipse(brush, x, y, dotSize, dotSize);
-                        }
-
-                        using var pen = new Pen(Color.FromArgb(128, 0, 0, 0), 2); // semi-transparent black, thickness = 3
-                        g.DrawEllipse(pen, x, y, dotSize, dotSize); // draw stroke around the dot
-                    }
-                }
-
-                return (Icon) baseIcon.Clone();
-                return Icon.FromHandle(bmp.GetHicon());
-            }
-
-            private Icon LoadEmbeddedIcon(string resourceName)
-            {
-                var asm = System.Reflection.Assembly.GetExecutingAssembly();
-                using var stream = asm.GetManifestResourceStream(resourceName);
-                if (stream == null)
-                    throw new Exception($"Resource not found: {resourceName}");
-                return new Icon(stream);
-            }
-
-
             private void OnInstallClicked(object? sender, EventArgs e)
             {
-                if (sender is not ToolStripItem menuItem) return;
+                if (sender is not ToolStripItem menuItem || string.IsNullOrWhiteSpace(latestUrl)) return;
 
                 if (downloadCts != null)
                 {
@@ -212,130 +163,91 @@ namespace NvidiaDriverTrayChecker
                     return;
                 }
 
-                if (string.IsNullOrWhiteSpace(latestUrl)) return;
-
                 string filename = Path.GetFileName(latestUrl);
                 string targetPath = Path.Combine(DownloadDir, filename);
 
+                _ = DownloadFileAsync(latestUrl, targetPath, menuItem);
+            }
+
+            private async Task DownloadFileAsync(string url, string targetPath, ToolStripItem menuItem)
+            {
                 downloadCts = new CancellationTokenSource();
                 UiInvoke(() => menuItem.Text = "Cancel");
+                ShowBalloon("Downloading NVIDIA driver", Path.GetFileName(targetPath), ToolTipIcon.Info);
 
-                UiInvoke(() =>
+                try
                 {
-                    trayIcon.BalloonTipTitle = "Downloading NVIDIA driver";
-                    trayIcon.BalloonTipText = filename;
-                    trayIcon.BalloonTipIcon = ToolTipIcon.Info;
-                    trayIcon.ShowBalloonTip(3000);
-                });
+                    using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, downloadCts.Token);
+                    response.EnsureSuccessStatusCode();
 
-                Task.Run(async () =>
-                {
-                    try
+                    var total = response.Content.Headers.ContentLength ?? -1L;
+                    long received = 0;
+                    var lastUpdate = DateTime.MinValue;
+
+                    using (var stream = await response.Content.ReadAsStreamAsync())
                     {
-                        using var response = await client.GetAsync(latestUrl, HttpCompletionOption.ResponseHeadersRead, downloadCts.Token);
-                        response.EnsureSuccessStatusCode();
-
-                        var totalBytes = response.Content.Headers.ContentLength ?? -1L;
-                        var receivedBytes = 0L;
-                        var lastUpdate = DateTime.MinValue;
-
-                        using var stream = await response.Content.ReadAsStreamAsync();
-                        using var fs = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
-                        byte[] buffer = new byte[8192];
-                        int read;
-
-                        while ((read = await stream.ReadAsync(buffer, 0, buffer.Length, downloadCts.Token)) > 0)
+                        using (var fs = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.Read, 8192, true))
                         {
-                            await fs.WriteAsync(buffer, 0, read, downloadCts.Token);
-                            receivedBytes += read;
 
-                            if (totalBytes > 0 && (DateTime.Now - lastUpdate).TotalSeconds >= 2)
+                            byte[] buffer = new byte[8192];
+                            int read;
+                            while ((read = await stream.ReadAsync(buffer, 0, buffer.Length, downloadCts.Token)) > 0)
                             {
-                                int percent = (int)(receivedBytes * 100 / totalBytes);
-                                lastUpdate = DateTime.Now;
+                                await fs.WriteAsync(buffer, 0, read, downloadCts.Token);
+                                received += read;
 
-                                UiInvoke(() =>
+                                if (total > 0 && (DateTime.Now - lastUpdate).TotalSeconds >= 2)
                                 {
-                                    trayIcon.BalloonTipText = $"{filename}\n{percent}% downloaded";
-                                    trayIcon.ShowBalloonTip(1000);
-                                    trayIcon.Text = $"Downloading {percent}% ({filename})";
-                                });
+                                    lastUpdate = DateTime.Now;
+                                    int percent = (int)(received * 100 / total);
+                                    ShowBalloon("Downloading NVIDIA driver", $"{Path.GetFileName(targetPath)}\n{percent}% downloaded", ToolTipIcon.Info, 1000);
+                                    UiInvoke(() => trayIcon.Text = $"Downloading {percent}% ({Path.GetFileName(targetPath)})");
+                                }
                             }
                         }
-
-                        UiInvoke(() =>
-                        {
-                            trayIcon.BalloonTipTitle = "Download complete";
-                            trayIcon.BalloonTipText = $"Saved to {targetPath}\nStarting installer...";
-                            trayIcon.ShowBalloonTip(5000);
-                        });
-
-                        var installerProcess = new Process
-                        {
-                            StartInfo = new ProcessStartInfo
-                            {
-                                FileName = targetPath,
-                                UseShellExecute = true
-                            }
-                        };
-                        installerProcess.Start();
-
-                        UiInvoke(() =>
-                        {
-                            trayIcon.BalloonTipTitle = "Installer running";
-                            trayIcon.BalloonTipText = "Waiting for NVIDIA installer to finish...";
-                            trayIcon.ShowBalloonTip(5000);
-                        });
-
-                        await Task.Run(() => installerProcess.WaitForExit());
-
-                        await CheckForUpdateAsync();
                     }
-                    catch (OperationCanceledException)
+                    ShowBalloon("Download complete", $"Saved to {targetPath}\nStarting installer...", ToolTipIcon.Info, 5000);
+                    UiInvoke(() => trayIcon.Text = $"Download complete. Running installer...");
+
+                    try { File.Delete(targetPath + ":Zone.Identifier"); } catch { }
+
+                    // launch installer safely
+                    Process? installer = null;
+                    UiInvoke(() => installer = Process.Start(new ProcessStartInfo
                     {
-                        UiInvoke(() =>
-                        {
-                            trayIcon.BalloonTipTitle = "Download cancelled";
-                            trayIcon.BalloonTipText = filename;
-                            trayIcon.BalloonTipIcon = ToolTipIcon.Warning;
-                            trayIcon.ShowBalloonTip(3000);
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        UiInvoke(() =>
-                        {
-                            trayIcon.BalloonTipTitle = "Download failed";
-                            trayIcon.BalloonTipText = ex.Message;
-                            trayIcon.BalloonTipIcon = ToolTipIcon.Error;
-                            trayIcon.ShowBalloonTip(10000);
-                        });
-                    }
-                    finally
-                    {
-                        downloadCts.Dispose();
-                        downloadCts = null;
+                        FileName = targetPath,
+                        WorkingDirectory = Path.GetDirectoryName(targetPath)!,
+                        UseShellExecute = true,
+                        Verb = "runas"
+                    }));
 
-                        UiInvoke(() =>
-                        {
-                            menuItem!.Text = $"Update {installedVersion} -> {latestVersion}";
-                            menuItem.Enabled = true;
-                            trayIcon.Text = updateAvailable ? $"Update available: {latestVersion}" : $"Up to date ({installedVersion})";
-                        });
-                    }
-                });
+                    if (installer == null) throw new Exception("Failed to start installer");
+
+                    // wait off UI thread
+                    await Task.Run(() => installer.WaitForExit());
+                    await CheckForUpdateAsync();
+                }
+                catch (OperationCanceledException)
+                {
+                    ShowBalloon("Download cancelled", Path.GetFileName(targetPath), ToolTipIcon.Warning);
+                }
+                catch (Exception ex)
+                {
+                    ShowBalloon("Download failed", ex.Message, ToolTipIcon.Error, 10000);
+                }
+                finally
+                {
+                    downloadCts.Dispose();
+                    downloadCts = null;
+                }
             }
 
             protected override void Dispose(bool disposing)
             {
-                if (disposing)
-                {
-                    trayIcon?.Dispose();
-                }
+                if (disposing) trayIcon.Dispose();
                 base.Dispose(disposing);
             }
         }
-
 
         static string? GetInstalledVersionPowerShell()
         {
@@ -362,12 +274,9 @@ namespace NvidiaDriverTrayChecker
                 string output = proc?.StandardOutput.ReadToEnd().Trim() ?? "";
                 proc?.WaitForExit();
 
-                if (!string.IsNullOrWhiteSpace(output))
-                    return output;
+                return string.IsNullOrWhiteSpace(output) ? null : output;
             }
-            catch { }
-
-            return null;
+            catch { return null; }
         }
 
         static async Task<(string ver, string url)> GetLatestDriver(string apiUrl)
@@ -389,13 +298,12 @@ namespace NvidiaDriverTrayChecker
                 }
             }
             catch { }
-            return ("", ""); // Non-nullable defaults
+            return ("", "");
         }
 
         static bool IsNewer(string? latest, string? current)
         {
             if (latest == null || current == null) return false;
-
             return Version.TryParse(latest, out var lv) &&
                    Version.TryParse(current, out var cv) &&
                    lv > cv;
