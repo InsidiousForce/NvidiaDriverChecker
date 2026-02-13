@@ -1,0 +1,37 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove=".gitignore" />
+    <None Remove="README.md" />
+    <None Remove="res\tray0.ico" />
+    <None Remove="res\tray1.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="res\tray0.ico" />
+    <EmbeddedResource Include="res\tray1.ico" />
+  </ItemGroup>
+
+	<PropertyGroup>
+		<ApplicationIcon>res\tray1.ico</ApplicationIcon>
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<RuntimeIdentifier>win-x64</RuntimeIdentifier>
+		<SelfContained>true</SelfContained>
+		<PublishSingleFile>true</PublishSingleFile>
+	</PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Management" Version="10.0.3" />
+  </ItemGroup>
+
+</Project>

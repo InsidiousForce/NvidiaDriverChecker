@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/Solution Files/">
+    <File Path=".gitignore" />
+    <File Path="LICENSE" />
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="NvidiaDriverTrayChecker/NvidiaDriverTrayChecker.csproj" />
+</Solution>
