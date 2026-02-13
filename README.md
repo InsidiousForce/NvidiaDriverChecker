@@ -1,4 +1,4 @@
-# NvidiaDriverTrayChecker
+# NvidiaDriverChecker
 
 Checks for new versions of Nvidia GeForce graphics drivers.
 If you like, it will download and install.
@@ -11,7 +11,9 @@ website makes you jump through hoops to check for new versions.
 This was ported from node because I got tired of having to
 update packages constantly in node hell.
 
-## Usage
+## NvidiaDriverTrayChecker
+
+### Usage
 
 Build the project. If you have Visual Studio, publish the project.
 If you have VSCode, run the ps.
@@ -25,14 +27,14 @@ icon, you can download and install the new drivers, or you can
 exit the app. If you start downloading, you can cancel from the menu.
 
 
-## Game Ready Drivers vs Studio Drivers
+### Game Ready Drivers vs Studio Drivers
 
 This defaults to downloading Studio drivers. Right now there'a lines
 at the top of the `Program.cs` file that you can comment to change the
 url to Game Ready. I could add a config sheet to the app, but I feel
 like no one will be interested in this except me. Who knows.
 
-## Compatibility
+### Compatibility
 
 This only works on Windows 10+ as far as I know. I'm using Windows 11.
 
